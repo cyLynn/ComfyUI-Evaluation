@@ -639,8 +639,48 @@ class PoseAssessmentNode:
             print(f"MediaPipe姿态评估出错: {str(e)}")
             return 0.0, image
     
-    def _openpose_assessment(self, image, model_name="body_25"):
-        """参考ComfyUI-OpenPose仓库，兼容body_25/coco/hand三种模型推理"""
+    def _get_openpose_pairs(self, model_name):
+        """返回每种模型的骨骼连线规则，参考ComfyUI-OpenPose仓库"""
+        if model_name == "body_25":
+            # 官方body_25骨骼连线
+            return [
+                [0,1],[1,2],[2,3],[3,4],    # 鼻-脖-右肩-右肘-右腕
+                [1,5],[5,6],[6,7],          # 脖-左肩-左肘-左腕
+                [1,8],[8,9],[9,10],         # 脖-髋-右膝-右踝
+                [1,11],[11,12],[12,13],     # 脖-左髋-左膝-左踝
+                [0,15],[15,17],             # 鼻-右眼-右耳
+                [0,14],[14,16],             # 鼻-左眼-左耳
+                [2,17],[5,16],              # 右肩-右耳，左肩-左耳
+                [8,11]                      # 髋-左髋
+            ]
+        elif model_name == "coco":
+            # 官方coco骨骼连线
+            return [
+                [0,1],[1,2],[2,3],[3,4],
+                [1,5],[5,6],[6,7],
+                [1,8],[8,9],[9,10],
+                [1,11],[11,12],[12,13],
+                [0,14],[0,15],[14,16],[15,17]
+            ]
+        elif model_name == "hand":
+            # 官方hand骨骼连线
+            return [
+                [0,1],[1,2],[2,3],[3,4],
+                [0,5],[5,6],[6,7],[7,8],
+                [0,9],[9,10],[10,11],[11,12],
+                [0,13],[13,14],[14,15],[15,16],
+                [0,17],[17,18],[18,19],[19,20]
+            ]
+        else:
+            return []
+
+    def _openpose_assessment(self, image, model_name="body_25", export_pose=False, single_bone=None):
+        """
+        OpenPose推理，支持：
+        - 彩色骨骼点可视化
+        - 导出原始pose点数据（export_pose=True）
+        - 只画单根骨骼（single_bone=(i,j)）
+        """
         try:
             import cv2
             model_dir = os.path.join(folder_paths.models_dir, "openpose", model_name)
@@ -657,7 +697,6 @@ class PoseAssessmentNode:
             # 配置参数和颜色
             if model_name == "body_25":
                 num_points = 25
-                pose_pairs = [[1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[9,10],[1,11],[11,12],[12,13],[0,14],[0,15],[14,16],[15,17],[2,17],[5,16],[8,11]]
                 point_colors = [
                     (255,0,0), (255,85,0), (255,170,0), (255,255,0), (170,255,0), (85,255,0), (0,255,0),
                     (0,255,85), (0,255,170), (0,255,255), (0,170,255), (0,85,255), (0,0,255), (85,0,255),
@@ -666,7 +705,6 @@ class PoseAssessmentNode:
                 ]
             elif model_name == "coco":
                 num_points = 18
-                pose_pairs = [[1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[9,10],[1,11],[11,12],[12,13],[0,14],[0,15],[14,16],[15,17]]
                 point_colors = [
                     (255,0,0), (255,85,0), (255,170,0), (255,255,0), (170,255,0), (85,255,0), (0,255,0),
                     (0,255,85), (0,255,170), (0,255,255), (0,170,255), (0,85,255), (0,0,255), (85,0,255),
@@ -674,7 +712,6 @@ class PoseAssessmentNode:
                 ]
             elif model_name == "hand":
                 num_points = 22
-                pose_pairs = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20]]
                 point_colors = [
                     (255,0,0), (255,85,0), (255,170,0), (255,255,0), (170,255,0), (85,255,0), (0,255,0),
                     (0,255,85), (0,255,170), (0,255,255), (0,170,255), (0,85,255), (0,0,255), (85,0,255),
@@ -682,6 +719,8 @@ class PoseAssessmentNode:
                 ]
             else:
                 raise ValueError(f"未知OpenPose模型: {model_name}")
+
+            pose_pairs = self._get_openpose_pairs(model_name)
 
             # 推理
             height, width = image.shape[:2]
@@ -697,19 +736,30 @@ class PoseAssessmentNode:
                 prob_map = cv2.resize(prob_map, (width, height))
                 _, prob, _, point = cv2.minMaxLoc(prob_map)
                 if prob > 0.1:
-                    points.append((int(point[0]), int(point[1]), prob))
+                    points.append((int(point[0]), int(point[1]), float(prob)))
                 else:
                     points.append(None)
 
-            # 彩色可视化
+            # 导出pose数据
+            if export_pose:
+                return points
+
+            # 可视化
             visualization = image.copy()
             for i, p in enumerate(points):
                 if p:
                     color = point_colors[i % len(point_colors)]
                     cv2.circle(visualization, (p[0], p[1]), 6, color, -1, lineType=cv2.LINE_AA)
-            for pair in pose_pairs:
-                if points[pair[0]] and points[pair[1]]:
-                    cv2.line(visualization, (points[pair[0]][0], points[pair[0]][1]), (points[pair[1]][0], points[pair[1]][1]), (0,255,0), 2, lineType=cv2.LINE_AA)
+            # 连线
+            if single_bone is not None:
+                # 只画一根骨骼
+                i, j = single_bone
+                if points[i] and points[j]:
+                    cv2.line(visualization, (points[i][0], points[i][1]), (points[j][0], points[j][1]), (0,255,0), 3, lineType=cv2.LINE_AA)
+            else:
+                for pair in pose_pairs:
+                    if points[pair[0]] and points[pair[1]]:
+                        cv2.line(visualization, (points[pair[0]][0], points[pair[0]][1]), (points[pair[1]][0], points[pair[1]][1]), (0,255,0), 2, lineType=cv2.LINE_AA)
 
             # 简单分数
             valid_points = sum(1 for p in points if p is not None)
