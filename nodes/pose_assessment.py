@@ -640,8 +640,9 @@ class PoseAssessmentNode:
             return 0.0, image
     
     def _openpose_assessment(self, image, model_name="body_25"):
-        """使用OpenPose进行姿态评估"""
+        """参考ComfyUI-OpenPose仓库，兼容body_25/coco/hand三种模型推理"""
         try:
+            import cv2
             model_dir = os.path.join(folder_paths.models_dir, "openpose", model_name)
             prototxt_path = None
             model_path = None
@@ -652,131 +653,75 @@ class PoseAssessmentNode:
                     model_path = os.path.join(model_dir, file)
             if not prototxt_path or not model_path:
                 raise FileNotFoundError("OpenPose模型文件不完整，请参考README手动下载！")
-            
-            # 加载模型
-            net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
-            
-            # 设置后端和目标
-            if cv2.cuda.getCudaEnabledDeviceCount() > 0:
-                net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-                net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-            else:
-                net.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
-                net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-            
-            # 根据不同模型设置关键点数量和对应关系
+
+            # 配置参数和颜色
             if model_name == "body_25":
                 num_points = 25
-                pose_pairs = [[1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[9,10],[1,11],[11,12],[12,13],
-                              [0,14],[0,15],[14,16],[15,17],[2,17],[5,16],[8,11]]
-                # 设置关键点颜色
-                point_colors = [(0,255,255), (0,0,255), (255,0,0), (255,0,0), (255,0,0), (0,255,0), (0,255,0), 
-                               (0,255,0), (255,255,0), (255,255,0), (255,255,0), (0,255,255), (0,255,255), 
-                               (0,255,255), (255,0,255), (255,0,255), (255,0,255), (255,128,0), (255,128,0), 
-                               (255,128,0), (0,128,255), (0,128,255), (0,128,255), (128,0,255), (128,0,255)]
+                pose_pairs = [[1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[9,10],[1,11],[11,12],[12,13],[0,14],[0,15],[14,16],[15,17],[2,17],[5,16],[8,11]]
+                point_colors = [
+                    (255,0,0), (255,85,0), (255,170,0), (255,255,0), (170,255,0), (85,255,0), (0,255,0),
+                    (0,255,85), (0,255,170), (0,255,255), (0,170,255), (0,85,255), (0,0,255), (85,0,255),
+                    (170,0,255), (255,0,255), (255,0,170), (255,0,85), (128,128,128), (128,0,0), (0,128,0),
+                    (0,0,128), (128,128,0), (0,128,128), (128,0,128)
+                ]
             elif model_name == "coco":
                 num_points = 18
-                pose_pairs = [[1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[9,10],[1,11],[11,12],[12,13],
-                             [0,14],[0,15],[14,16],[15,17]]
-                # 设置关键点颜色
-                point_colors = [(0,255,255), (0,0,255), (255,0,0), (255,0,0), (255,0,0), (0,255,0), (0,255,0), 
-                               (0,255,0), (255,255,0), (255,255,0), (255,255,0), (0,255,255), (0,255,255), 
-                               (0,255,255), (255,0,255), (255,0,255), (255,0,255), (255,128,0)]
-            else:  # 默认使用body_25
-                num_points = 25
-                pose_pairs = [[1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[9,10],[1,11],[11,12],[12,13],
-                              [0,14],[0,15],[14,16],[15,17],[2,17],[5,16],[8,11]]
-                point_colors = [(0,255,255)] * 25  # 默认颜色
-            
-            # 准备输入图像
+                pose_pairs = [[1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[9,10],[1,11],[11,12],[12,13],[0,14],[0,15],[14,16],[15,17]]
+                point_colors = [
+                    (255,0,0), (255,85,0), (255,170,0), (255,255,0), (170,255,0), (85,255,0), (0,255,0),
+                    (0,255,85), (0,255,170), (0,255,255), (0,170,255), (0,85,255), (0,0,255), (85,0,255),
+                    (170,0,255), (255,0,255), (255,0,170), (255,0,85)
+                ]
+            elif model_name == "hand":
+                num_points = 22
+                pose_pairs = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20]]
+                point_colors = [
+                    (255,0,0), (255,85,0), (255,170,0), (255,255,0), (170,255,0), (85,255,0), (0,255,0),
+                    (0,255,85), (0,255,170), (0,255,255), (0,170,255), (0,85,255), (0,0,255), (85,0,255),
+                    (170,0,255), (255,0,255), (255,0,170), (255,0,85), (128,128,128), (128,0,0), (0,128,0), (0,0,128)
+                ]
+            else:
+                raise ValueError(f"未知OpenPose模型: {model_name}")
+
+            # 推理
             height, width = image.shape[:2]
-            input_size = 368  # OpenPose标准输入大小
-            input_blob = cv2.dnn.blobFromImage(image, 1.0 / 255, (input_size, input_size), 
-                                              (0, 0, 0), swapRB=False, crop=False)
-            
-            # 设置网络输入并进行前向传播
-            net.setInput(input_blob)
-            output = net.forward()
-            
-            # 提取关键点
+            input_size = 368
+            inp = cv2.dnn.blobFromImage(image, 1.0 / 255, (input_size, input_size), (0, 0, 0), swapRB=False, crop=False)
+            net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
+            net.setInput(inp)
+            out = net.forward()
+
             points = []
             for i in range(num_points):
-                # 获取热力图
-                prob_map = output[0, i, :, :]
+                prob_map = out[0, i, :, :]
                 prob_map = cv2.resize(prob_map, (width, height))
-                
-                # 找到关键点位置
                 _, prob, _, point = cv2.minMaxLoc(prob_map)
-                
-                # 检查置信度阈值
                 if prob > 0.1:
-                    points.append((point[0], point[1], prob))
+                    points.append((int(point[0]), int(point[1]), prob))
                 else:
                     points.append(None)
-            
-            # 创建可视化图像
+
+            # 彩色可视化
             visualization = image.copy()
-            
-            # 绘制关键点和连线
-            for i, point in enumerate(points):
-                if point:
-                    cv2.circle(visualization, (point[0], point[1]), 5, point_colors[i], -1)
-            
+            for i, p in enumerate(points):
+                if p:
+                    color = point_colors[i % len(point_colors)]
+                    cv2.circle(visualization, (p[0], p[1]), 6, color, -1, lineType=cv2.LINE_AA)
             for pair in pose_pairs:
                 if points[pair[0]] and points[pair[1]]:
-                    pt1 = points[pair[0]]
-                    pt2 = points[pair[1]]
-                    cv2.line(visualization, (pt1[0], pt1[1]), (pt2[0], pt2[1]), (0, 255, 0), 2)
-            
-            # 计算姿态评分
+                    cv2.line(visualization, (points[pair[0]][0], points[pair[0]][1]), (points[pair[1]][0], points[pair[1]][1]), (0,255,0), 2, lineType=cv2.LINE_AA)
+
+            # 简单分数
             valid_points = sum(1 for p in points if p is not None)
-            visibility_score = valid_points / num_points if num_points > 0 else 0
-            
-            # 检查肢体比例
-            proportion_score = self._check_openpose_proportions(points, model_name)
-            
-            # 计算最终分数
-            final_score = (visibility_score * 0.4 + proportion_score * 0.6) * 100
-            
-            # 添加评分信息
-            cv2.putText(
-                visualization,
-                f"Pose Score: {final_score:.2f}",
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (255, 255, 255),
-                2
-            )
-            
-            return final_score, visualization
-            
+            score = valid_points / num_points * 100
+            cv2.putText(visualization, f"Pose Score: {score:.2f}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+            return score, visualization
         except Exception as e:
             import traceback
             traceback.print_exc()
-            print(f"OpenPose姿态评估出错: {str(e)}")
-            
-            # 在发生错误时，显示错误信息
             visualization = image.copy()
-            cv2.putText(
-                visualization,
-                f"OpenPose Error: {str(e)}",
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2
-            )
-            cv2.putText(
-                visualization,
-                "Please download models with tools/manage_openpose_models.py",
-                (20, 80),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2
-            )
-            
+            cv2.putText(visualization, f"OpenPose Error: {str(e)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+            cv2.putText(visualization, "请参考README手动下载模型", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
             return 0.0, visualization
     
     def _check_body_proportions(self, landmarks):
