@@ -483,59 +483,31 @@ class PoseAssessmentNode:
     
     @classmethod
     def list_local_openpose_models(cls):
-        """列出ComfyUI models/openpose目录下的所有模型和正在下载的模型"""
+        """列出ComfyUI models/openpose目录下的所有模型"""
         models = []
-        available_models = []
         openpose_dir = os.path.join(folder_paths.models_dir, "openpose")
-        
-        # 检查现有模型
         if os.path.exists(openpose_dir):
             for model_name in os.listdir(openpose_dir):
                 model_path = os.path.join(openpose_dir, model_name)
                 if os.path.isdir(model_path):
-                    # 检查是否包含必要的模型文件
-                    has_caffe_model = False
-                    has_prototxt = False
-                    for file in os.listdir(model_path):
-                        if file.endswith('.caffemodel'):
-                            has_caffe_model = True
-                        elif file.endswith('.prototxt'):
-                            has_prototxt = True
-                    
+                    has_caffe_model = any(f.endswith('.caffemodel') for f in os.listdir(model_path))
+                    has_prototxt = any(f.endswith('.prototxt') for f in os.listdir(model_path))
                     if has_caffe_model and has_prototxt:
                         models.append(model_name)
-                        available_models.append(model_name)
-                    elif model_name in downloading_models and downloading_models[model_name]:
-                        # 如果模型正在下载中，显示下载进度
-                        progress = get_model_download_progress(model_name)
-                        if progress < 0:
-                            # 下载失败
-                            download_label = f"{model_name} (下载失败，请重试)"
-                        else:
-                            # 正常下载中
-                            download_label = f"{model_name} (正在下载: {progress:.1f}%)"
-                        models.append(download_label)
-                        # 在下载完成后能够自动使用
-                        available_models.append(model_name)
-                    
-                    # 检查模型信息文件，是否标记为不完整
-                    elif os.path.exists(os.path.join(model_path, "model_info.json")):
-                        try:
-                            with open(os.path.join(model_path, "model_info.json"), 'r', encoding='utf-8') as f:
-                                info = json.load(f)
-                                if info.get("status") == "incomplete":
-                                    models.append(f"{model_name} (下载不完整，请重新下载)")
-                                    available_models.append(model_name)
-                        except:
-                            pass
-        
-        # 添加未下载但可用的预定义模型
-        for model_name in OPENPOSE_MODELS:
-            if model_name not in available_models:
-                models.append(f"{model_name} (点击下载)")
-        
+        # 只显示本地存在的模型
         return models
-    
+
+    def _check_model_files(self, model_dir):
+        """检查指定目录下是否有有效的caffemodel和prototxt文件"""
+        has_caffe_model = False
+        has_prototxt = False
+        for file in os.listdir(model_dir):
+            if file.endswith('.caffemodel') and os.path.getsize(os.path.join(model_dir, file)) > 0:
+                has_caffe_model = True
+            if file.endswith('.prototxt') and os.path.getsize(os.path.join(model_dir, file)) > 0:
+                has_prototxt = True
+        return has_caffe_model and has_prototxt
+
     def evaluate_pose(self, image, method="MediaPipe", openpose_model="body_25", use_proxy="全局设置"):
         # 确保只处理单张图像
         if len(image.shape) == 4:
@@ -545,13 +517,6 @@ class PoseAssessmentNode:
         image_np = image.cpu().numpy()
         image_np = (image_np * 255).astype(np.uint8)
         
-        # 保存代理配置选项供后续使用
-        self.last_use_proxy = None  # 默认使用全局配置
-        if use_proxy == "使用代理":
-            self.last_use_proxy = True
-        elif use_proxy == "不使用代理":
-            self.last_use_proxy = False
-        
         if method == "MediaPipe":
             score, visualization = self._mediapipe_assessment(image_np)
         else:  # OpenPose
@@ -560,49 +525,23 @@ class PoseAssessmentNode:
             if "(" in openpose_model:
                 clean_model_name = openpose_model.split("(")[0].strip()
             
-            # 自动下载模型如果需要
-            if ("下载" in openpose_model or "重试" in openpose_model or "重新下载" in openpose_model) and clean_model_name in OPENPOSE_MODELS:
-                # 如果是重试或重新下载，清除之前的状态
-                if "重试" in openpose_model or "重新下载" in openpose_model:
-                    print(f"用户选择重新下载 {clean_model_name} 模型")
-                    # 移除可能存在的不完整下载标记
-                    model_dir = os.path.join(folder_paths.models_dir, "openpose", clean_model_name)
-                    if os.path.exists(model_dir):
-                        info_path = os.path.join(model_dir, "model_info.json")
-                        if os.path.exists(info_path):
-                            try:
-                                os.remove(info_path)
-                            except:
-                                pass
-                    # 清除下载进度记录
-                    for file_name in OPENPOSE_MODELS[clean_model_name]["files"]:
-                        key = f"{clean_model_name}/{file_name}"
-                        if key in download_progress:
-                            download_progress[key] = 0
-                else:
-                    print(f"用户选择下载 {clean_model_name} 模型")
-                
-                # 根据use_proxy参数决定是否使用代理
-                use_proxy_flag = self.last_use_proxy
-                
-                if use_proxy_flag is True:
-                    
-                    print("使用代理下载模型")
-                elif use_proxy_flag is False:
-                    print("不使用代理下载模型")
-                else:
-                    print(f"使用全局代理配置下载模型 (已{'启用' if PROXY_CONFIG['enabled'] else '禁用'})")
-                
-                # 启动下载
-                download_model(clean_model_name, use_proxy=use_proxy_flag)
-                
-                # 创建下载提示图像
+            # 检查模型是否存在，不自动下载
+            model_dir = os.path.join(folder_paths.models_dir, "openpose", clean_model_name)
+            model_exists = os.path.exists(model_dir) and self._check_model_files(model_dir)
+            
+            if not model_exists:
+                # 创建模型不存在的提示图像
                 visualization = image_np.copy()
                 
-                # 绘制模型信息和下载状态
+                # 添加半透明蒙版
+                overlay = visualization.copy()
+                cv2.rectangle(overlay, (0, 0), (visualization.shape[1], 180), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.6, visualization, 0.4, 0, visualization)
+                
+                # 显示模型缺失信息
                 cv2.putText(
                     visualization,
-                    f"正在下载OpenPose模型: {clean_model_name}",
+                    f"OpenPose模型未找到: {clean_model_name}",
                     (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
@@ -610,20 +549,9 @@ class PoseAssessmentNode:
                     2
                 )
                 
-                # 显示使用的代理状态
-                if use_proxy_flag is True:
-                    proxy_status = "使用代理"
-                    if PROXY_CONFIG["http"] or PROXY_CONFIG["https"]:
-                        proxy_info = PROXY_CONFIG["http"] or PROXY_CONFIG["https"]
-                        proxy_status += f": {proxy_info}"
-                elif use_proxy_flag is False:
-                    proxy_status = "不使用代理"
-                else:
-                    proxy_status = "使用全局代理配置" + (f": {PROXY_CONFIG['http'] or PROXY_CONFIG['https']}" if PROXY_CONFIG["enabled"] else "(已禁用)")
-                
                 cv2.putText(
                     visualization,
-                    f"{proxy_status}",
+                    "请参考README手动下载并放置模型文件",
                     (20, 80),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
@@ -631,25 +559,13 @@ class PoseAssessmentNode:
                     2
                 )
                 
-                # 显示下载提示信息
                 cv2.putText(
                     visualization,
-                    "请等待下载完成后重试...",
+                    f"模型路径: {model_dir}",
                     (20, 120),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
-                    (0, 0, 255),
-                    2
-                )
-                
-                # 添加下载帮助信息
-                cv2.putText(
-                    visualization,
-                    "也可使用 tools/manage_openpose_models.py 手动下载",
-                    (20, 160),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 200, 255),
+                    (255, 255, 255),
                     2
                 )
                 
@@ -726,137 +642,7 @@ class PoseAssessmentNode:
     def _openpose_assessment(self, image, model_name="body_25"):
         """使用OpenPose进行姿态评估"""
         try:
-            # 检查模型是否已准备就绪
-            if not is_model_ready(model_name):
-                # 如果模型不存在或不完整，开始下载
-                if model_name not in downloading_models or not downloading_models[model_name]:
-                    print(f"OpenPose模型 {model_name} 未找到或不完整，开始自动下载...")
-                    # 尝试获取代理设置
-                    use_proxy_flag = None
-                    if hasattr(self, 'last_use_proxy'):
-                        use_proxy_flag = self.last_use_proxy
-                    download_model(model_name, use_proxy=use_proxy_flag)
-                
-                # 获取当前下载进度
-                progress = get_model_download_progress(model_name)
-                
-                # 创建带有下载进度的可视化图像
-                visualization = image.copy()
-                
-                # 添加半透明蒙版
-                overlay = visualization.copy()
-                cv2.rectangle(overlay, (0, 0), (visualization.shape[1], 180), (0, 0, 0), -1)
-                cv2.addWeighted(overlay, 0.6, visualization, 0.4, 0, visualization)
-                
-                if progress < 0:
-                    # 下载失败
-                    cv2.putText(
-                        visualization,
-                        f"OpenPose模型下载失败: {model_name}",
-                        (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 0, 255),
-                        2
-                    )
-                    
-                    # 根据当前代理设置显示提示信息
-                    proxy_message = ""
-                    if hasattr(self, 'last_use_proxy'):
-                        if self.last_use_proxy is True:
-                            proxy_message = "请检查代理设置或尝试不使用代理"
-                        elif self.last_use_proxy is False:
-                            proxy_message = "请检查网络连接或尝试使用代理"
-                        else:
-                            if PROXY_CONFIG["enabled"]:
-                                proxy_message = "尝试禁用代理或检查代理设置"
-                            else:
-                                proxy_message = "尝试启用代理或检查网络连接"
-                    else:
-                        proxy_message = "请检查网络连接和代理设置"
-                    
-                    cv2.putText(
-                        visualization,
-                        proxy_message,
-                        (20, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 0, 255),
-                        2
-                    )
-                    
-                    cv2.putText(
-                        visualization,
-                        "点击下拉菜单中的模型名称重新下载",
-                        (20, 120),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 0, 255),
-                        2
-                    )
-                    
-                    cv2.putText(
-                        visualization,
-                        "或使用tools/manage_openpose_models.py手动下载",
-                        (20, 160),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 140, 255),
-                        2
-                    )
-                else:
-                    # 正常下载中
-                    # 绘制进度条
-                    progress_bar_width = int((visualization.shape[1] - 40) * (progress / 100))
-                    cv2.rectangle(visualization, (20, 60), (visualization.shape[1] - 20, 80), (100, 100, 100), -1)
-                    cv2.rectangle(visualization, (20, 60), (20 + progress_bar_width, 80), (0, 255, 0), -1)
-                    
-                    cv2.putText(
-                        visualization,
-                        f"正在下载OpenPose模型: {model_name}",
-                        (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (255, 255, 255),
-                        2
-                    )
-                    
-                    cv2.putText(
-                        visualization,
-                        f"进度: {progress:.1f}%",
-                        (20, 110),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (255, 255, 255),
-                        2
-                    )
-                    
-                    # 显示代理状态
-                    proxy_status = "未知"
-                    if hasattr(self, 'last_use_proxy'):
-                        if self.last_use_proxy is True:
-                            proxy_status = "使用代理"
-                        elif self.last_use_proxy is False:
-                            proxy_status = "不使用代理"
-                        else:
-                            proxy_status = "全局代理" + ("(已启用)" if PROXY_CONFIG["enabled"] else "(已禁用)")
-                    
-                    cv2.putText(
-                        visualization,
-                        f"代理状态: {proxy_status}",
-                        (20, 150),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (255, 255, 255),
-                        2
-                    )
-                
-                return 0.0, visualization
-            
-            # 获取模型路径
             model_dir = os.path.join(folder_paths.models_dir, "openpose", model_name)
-            
-            # 查找模型文件
             prototxt_path = None
             model_path = None
             for file in os.listdir(model_dir):
@@ -864,29 +650,8 @@ class PoseAssessmentNode:
                     prototxt_path = os.path.join(model_dir, file)
                 elif file.endswith('.caffemodel'):
                     model_path = os.path.join(model_dir, file)
-            
             if not prototxt_path or not model_path:
-                # 如果找不到文件但目录存在，可能文件损坏，尝试重新下载
-                print(f"OpenPose模型文件不完整，尝试重新下载 {model_name} 模型...")
-                # 尝试获取代理设置
-                use_proxy_flag = None
-                if hasattr(self, 'last_use_proxy'):
-                    use_proxy_flag = self.last_use_proxy
-                download_model(model_name, use_proxy=use_proxy_flag)
-                
-                # 创建错误信息图像
-                visualization = image.copy()
-                cv2.putText(
-                    visualization,
-                    f"OpenPose模型文件不完整，正在重新下载: {model_name}",
-                    (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 0, 255),
-                    2
-                )
-                
-                return 0.0, visualization
+                raise FileNotFoundError("OpenPose模型文件不完整，请参考README手动下载！")
             
             # 加载模型
             net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)

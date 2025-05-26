@@ -104,3 +104,50 @@ python tools/manage_openpose_models.py proxy --config
 2. 自动下载可能受网络环境限制，如遇下载问题可使用此工具手动下载
 3. OpenPose模型文件较大，下载可能需要一定时间
 4. 在网络受限环境下，建议配置代理以提高下载成功率
+
+## OpenPose模型手动下载说明
+
+**本插件不再自动下载OpenPose模型。请用户手动下载以下模型文件，并放置到指定目录：**
+
+### 1. 下载地址
+
+- BODY_25模型：
+  - [pose_iter_584000.caffemodel (BODY_25)](http://posefs1.perception.cs.cmu.edu/OpenPose/models/pose/body_25/pose_iter_584000.caffemodel)
+  - [pose_deploy.prototxt (BODY_25)](https://raw.githubusercontent.com/CMU-Perceptual-Computing-Lab/openpose/master/models/pose/body_25/pose_deploy.prototxt)
+
+- COCO模型：
+  - [pose_iter_440000.caffemodel (COCO)](http://posefs1.perception.cs.cmu.edu/OpenPose/models/pose/coco/pose_iter_440000.caffemodel)
+  - [pose_deploy_linevec.prototxt (COCO)](https://raw.githubusercontent.com/CMU-Perceptual-Computing-Lab/openpose/master/models/pose/coco/pose_deploy_linevec.prototxt)
+
+- 手部模型：
+  - [pose_iter_102000.caffemodel (Hand)](http://posefs1.perception.cs.cmu.edu/OpenPose/models/hand/pose_iter_102000.caffemodel)
+  - [pose_deploy.prototxt (Hand)](https://raw.githubusercontent.com/CMU-Perceptual-Computing-Lab/openpose/master/models/hand/pose_deploy.prototxt)
+
+### 2. 放置目录
+
+请将上述文件分别放入如下目录（如无请手动创建文件夹）：
+
+```
+ComfyUI根目录/models/openpose/body_25/
+    pose_iter_584000.caffemodel
+    pose_deploy.prototxt
+ComfyUI根目录/models/openpose/coco/
+    pose_iter_440000.caffemodel
+    pose_deploy_linevec.prototxt
+ComfyUI根目录/models/openpose/hand/
+    pose_iter_102000.caffemodel
+    pose_deploy.prototxt
+```
+
+- 例如：`/your_comfyui_path/models/openpose/body_25/pose_iter_584000.caffemodel`
+
+### 3. 注意事项
+
+- 文件名必须与上面完全一致。
+- 下载后请确保文件大小正常（caffemodel通常几十MB）。
+- 没有模型文件时，节点会在界面上提示缺失。
+- 推荐使用科学上网工具下载。
+
+---
+
+原有的自动下载、代理配置等功能已废弃。请务必手动下载并放置模型文件，否则OpenPose节点无法正常工作。
