@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 导入要测试的模块
 from nodes.clip_score import CLIPScoreNode
 
-def test_clip_score(image_path=None, prompt="一个穿着漂亮衣服的模特"):
+def test_clip_score(image_path=None, prompt="一个穿着漂亮衣服的模特", model_name="openai/clip-vit-base-patch32"):
     """测试CLIPScore模块"""
     print("\n开始测试 CLIPScore 模块...")
     
@@ -25,7 +25,7 @@ def test_clip_score(image_path=None, prompt="一个穿着漂亮衣服的模特")
     clip_node = CLIPScoreNode()
     
     # 运行评估
-    score, annotated_image = clip_node.evaluate(image, prompt)
+    score, annotated_image = clip_node.evaluate(image, prompt, model_name, "否")
     
     # 打印结果
     print_score("CLIPScore", score)
@@ -43,6 +43,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='测试CLIPScore模块')
     parser.add_argument('--image', type=str, help='测试图像的路径', default=None)
     parser.add_argument('--prompt', type=str, help='文本提示词', default="一个穿着漂亮衣服的模特")
+    parser.add_argument('--model', type=str, help='CLIP模型名称', default="openai/clip-vit-base-patch32")
     args = parser.parse_args()
     
-    test_clip_score(args.image, args.prompt)
+    test_clip_score(args.image, args.prompt, args.model)

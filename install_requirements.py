@@ -18,7 +18,7 @@ CORE_REQUIREMENTS = [
 
 # 按功能模块划分的依赖项
 MODULE_REQUIREMENTS = {
-    "clip_score": ["git+https://github.com/openai/CLIP.git"],
+    "clip_score": ["transformers", "accelerate"],
     "pose_assessment": ["mediapipe"],
     "image_quality": ["scikit-image"],
     "fashion_analysis": [], # 实际使用时可能需要 detectron2

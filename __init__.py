@@ -12,12 +12,12 @@ def check_and_install_requirements():
     try:
         import torch
         import cv2
-        import clip
+        from transformers import CLIPProcessor, CLIPModel
         import numpy as np
     except ImportError:
         print("正在安装必要依赖...")
         import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "torch", "opencv-python", "git+https://github.com/openai/CLIP.git", "numpy", "scikit-image"])
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "torch", "opencv-python", "transformers", "accelerate", "numpy", "scikit-image"])
 
 # 注册文件夹路径
 comfy_path = os.path.dirname(folder_paths.__file__)
