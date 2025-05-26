@@ -1,0 +1,217 @@
+{
+  "last_node_id": 6,
+  "last_link_id": 7,
+  "nodes": [
+    {
+      "id": 4,
+      "type": "CLIPScoreNode",
+      "pos": [
+        488.54864501953125,
+        131.6417694091797
+      ],
+      "size": [
+        392.355712890625,
+        326.61773681640625
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "label": "image",
+          "type": "IMAGE",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "clip_score",
+          "label": "clip_score",
+          "type": "FLOAT",
+          "links": [
+            7
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "annotated_image",
+          "label": "annotated_image",
+          "type": "IMAGE",
+          "links": [
+            6
+          ],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "aux_id": "cyLynn/Comfyui-Evaluation",
+        "ver": "6f848fda552ceb89e273dc19784e059d62ec70e5",
+        "Node name for S&R": "CLIPScoreNode"
+      },
+      "widgets_values": [
+        "A fashionable woman wearing a light blue glossy puffer jacket, reflective and iridescent fabric, metallic sheen, futuristic style, silky surface texture, shimmering highlights, high fashion editorial photo, soft studio lighting, minimal clean background",
+        "openai/clip-vit-base-patch32",
+        "否",
+        [
+          false,
+          true
+        ]
+      ]
+    },
+    {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [
+        135.47509765625,
+        130.0178680419922
+      ],
+      "size": [
+        315,
+        314
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "label": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            5
+          ]
+        },
+        {
+          "name": "MASK",
+          "label": "MASK",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.15",
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "image (2).png",
+        "image"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "PreviewImage",
+      "pos": [
+        954.9597778320312,
+        129.0264129638672
+      ],
+      "size": [
+        260,
+        330
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "label": "images",
+          "type": "IMAGE",
+          "link": 6
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.15",
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 6,
+      "type": "easy showAnything",
+      "pos": [
+        977.0664672851562,
+        375.6833190917969
+      ],
+      "size": [
+        220,
+        80
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "anything",
+          "label": "anything",
+          "type": "*",
+          "shape": 7,
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "label": "output",
+          "type": "*",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-easy-use",
+        "ver": "1.2.9",
+        "Node name for S&R": "easy showAnything"
+      },
+      "widgets_values": [
+        "35.30255889892578"
+      ]
+    }
+  ],
+  "links": [
+    [
+      5,
+      2,
+      0,
+      4,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      4,
+      1,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      7,
+      4,
+      0,
+      6,
+      0,
+      "*"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1.3109994191500147,
+      "offset": [
+        112.86796970030585,
+        11.501561879132568
+      ]
+    },
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}
