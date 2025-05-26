@@ -9,25 +9,200 @@ import cv2
 import os
 import json
 import folder_paths
-import os
-import folder_paths
-import json
+import urllib.request
+import shutil
+import threading
+import time
+from pathlib import Path
+
+# 模型URLs和文件信息
+OPENPOSE_MODELS = {
+    "body_25": {
+        "description": "BODY_25模型 - 25个关键点的人体姿势模型",
+        "files": {
+            "pose_iter_584000.caffemodel": "http://posefs1.perception.cs.cmu.edu/OpenPose/models/pose/body_25/pose_iter_584000.caffemodel",
+            "pose_deploy.prototxt": "https://raw.githubusercontent.com/CMU-Perceptual-Computing-Lab/openpose/master/models/pose/body_25/pose_deploy.prototxt"
+        }
+    },
+    "coco": {
+        "description": "COCO模型 - 18个关键点的人体姿势模型",
+        "files": {
+            "pose_iter_440000.caffemodel": "http://posefs1.perception.cs.cmu.edu/OpenPose/models/pose/coco/pose_iter_440000.caffemodel",
+            "pose_deploy_linevec.prototxt": "https://raw.githubusercontent.com/CMU-Perceptual-Computing-Lab/openpose/master/models/pose/coco/pose_deploy_linevec.prototxt"
+        }
+    },
+    "hand": {
+        "description": "手部姿势模型",
+        "files": {
+            "pose_iter_102000.caffemodel": "http://posefs1.perception.cs.cmu.edu/OpenPose/models/hand/pose_iter_102000.caffemodel",
+            "pose_deploy.prototxt": "https://raw.githubusercontent.com/CMU-Perceptual-Computing-Lab/openpose/master/models/hand/pose_deploy.prototxt"
+        }
+    }
+}
+
+# 全局变量，用于跟踪模型下载状态
+downloading_models = {}
+download_progress = {}
+
+def ensure_directory(dir_path):
+    """确保目录存在，如果不存在则创建"""
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+
+def download_file(url, destination):
+    """从URL下载文件到指定目标"""
+    try:
+        with urllib.request.urlopen(url) as response, open(destination, 'wb') as out_file:
+            file_size = int(response.headers.get('Content-Length', 0))
+            block_size = 8192
+            downloaded = 0
+            
+            while True:
+                buffer = response.read(block_size)
+                if not buffer:
+                    break
+                
+                downloaded += len(buffer)
+                out_file.write(buffer)
+                
+                # 更新下载进度
+                if file_size > 0:
+                    model_name = os.path.basename(os.path.dirname(destination))
+                    file_name = os.path.basename(destination)
+                    key = f"{model_name}/{file_name}"
+                    download_progress[key] = (downloaded / file_size) * 100
+        
+        return True
+    except Exception as e:
+        print(f"下载失败: {str(e)}")
+        return False
+
+def download_model_async(model_name):
+    """异步下载OpenPose模型"""
+    if model_name not in OPENPOSE_MODELS:
+        print(f"错误: 未知的模型 '{model_name}'")
+        downloading_models[model_name] = False
+        return False
+    
+    # 设置下载状态
+    downloading_models[model_name] = True
+    print(f"开始下载OpenPose模型: {model_name}")
+    
+    # 确定模型目录
+    openpose_dir = os.path.join(folder_paths.models_dir, "openpose", model_name)
+    ensure_directory(openpose_dir)
+    
+    # 下载模型文件
+    model_info = OPENPOSE_MODELS[model_name]
+    success = True
+    for file_name, url in model_info["files"].items():
+        file_path = os.path.join(openpose_dir, file_name)
+        key = f"{model_name}/{file_name}"
+        download_progress[key] = 0
+        
+        if not os.path.exists(file_path):
+            success = success and download_file(url, file_path)
+        else:
+            download_progress[key] = 100
+            print(f"文件已存在: {file_path}")
+    
+    # 创建模型信息文件
+    info_path = os.path.join(openpose_dir, "model_info.json")
+    with open(info_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            "name": model_name,
+            "description": model_info["description"],
+            "files": list(model_info["files"].keys())
+        }, f, ensure_ascii=False, indent=2)
+    
+    # 更新下载状态
+    downloading_models[model_name] = False
+    print(f"OpenPose模型下载完成: {model_name}")
+    
+    return success
+
+def download_model(model_name):
+    """启动异步下载线程"""
+    if model_name in downloading_models and downloading_models[model_name]:
+        print(f"模型 {model_name} 已经在下载中...")
+        return
+    
+    # 创建新线程进行下载
+    thread = threading.Thread(target=download_model_async, args=(model_name,))
+    thread.daemon = True
+    thread.start()
+
+def is_model_ready(model_name):
+    """检查模型是否已准备就绪"""
+    # 检查是否在下载中
+    if model_name in downloading_models and downloading_models[model_name]:
+        return False
+    
+    # 检查模型文件是否存在
+    model_dir = os.path.join(folder_paths.models_dir, "openpose", model_name)
+    if not os.path.exists(model_dir):
+        return False
+    
+    # 若模型不在OPENPOSE_MODELS中，无法验证文件
+    if model_name not in OPENPOSE_MODELS:
+        # 简单检查是否有.caffemodel和.prototxt文件
+        has_caffemodel = False
+        has_prototxt = False
+        for file in os.listdir(model_dir):
+            if file.endswith('.caffemodel'):
+                has_caffemodel = True
+            elif file.endswith('.prototxt'):
+                has_prototxt = True
+        
+        return has_caffemodel and has_prototxt
+    
+    # 检查所有必要文件
+    for file_name in OPENPOSE_MODELS[model_name]["files"]:
+        file_path = os.path.join(model_dir, file_name)
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            return False
+    
+    return True
+
+def get_model_download_progress(model_name):
+    """获取模型下载进度"""
+    if model_name not in OPENPOSE_MODELS:
+        return 0
+    
+    # 计算总进度
+    total_progress = 0
+    file_count = 0
+    
+    for file_name in OPENPOSE_MODELS[model_name]["files"]:
+        key = f"{model_name}/{file_name}"
+        if key in download_progress:
+            total_progress += download_progress[key]
+            file_count += 1
+    
+    if file_count == 0:
+        return 0
+    
+    return total_progress / file_count
 
 class PoseAssessmentNode:
     """评估人体姿态的自然度和肢体比例合理性"""
     
     @classmethod
     def INPUT_TYPES(cls):
-        # 获取本地OpenPose模型列表
+        # 获取本地OpenPose模型列表，包括可下载的模型
         openpose_models = cls.list_local_openpose_models()
         if not openpose_models:
-            openpose_models = ["body_25"]
+            # 添加默认可下载模型
+            for model in OPENPOSE_MODELS:
+                openpose_models.append(f"{model} (点击下载)")
+        
+        default_model = next((m for m in openpose_models if "body_25" in m and "下载" not in m), openpose_models[0])
         
         return {
             "required": {
                 "image": ("IMAGE",),
                 "method": (["OpenPose", "MediaPipe"], {"default": "MediaPipe"}),
-                "openpose_model": (openpose_models, {"default": openpose_models[0]}),
+                "openpose_model": (openpose_models, {"default": default_model}),
             }
         }
     
@@ -38,10 +213,12 @@ class PoseAssessmentNode:
     
     @classmethod
     def list_local_openpose_models(cls):
-        """列出ComfyUI models/openpose目录下的所有模型"""
+        """列出ComfyUI models/openpose目录下的所有模型和正在下载的模型"""
         models = []
+        available_models = []
         openpose_dir = os.path.join(folder_paths.models_dir, "openpose")
         
+        # 检查现有模型
         if os.path.exists(openpose_dir):
             for model_name in os.listdir(openpose_dir):
                 model_path = os.path.join(openpose_dir, model_name)
@@ -57,6 +234,18 @@ class PoseAssessmentNode:
                     
                     if has_caffe_model and has_prototxt:
                         models.append(model_name)
+                        available_models.append(model_name)
+                    elif model_name in downloading_models and downloading_models[model_name]:
+                        # 如果模型正在下载中，显示"downloading"
+                        download_label = f"{model_name} (正在下载: {get_model_download_progress(model_name):.1f}%)"
+                        models.append(download_label)
+                        # 在下载完成后能够自动使用
+                        available_models.append(model_name)
+        
+        # 添加未下载但可用的预定义模型
+        for model_name in OPENPOSE_MODELS:
+            if model_name not in available_models:
+                models.append(f"{model_name} (点击下载)")
         
         return models
     
@@ -72,7 +261,40 @@ class PoseAssessmentNode:
         if method == "MediaPipe":
             score, visualization = self._mediapipe_assessment(image_np)
         else:  # OpenPose
-            score, visualization = self._openpose_assessment(image_np, openpose_model)
+            # 处理模型名称，移除可能的下载标签
+            clean_model_name = openpose_model
+            if "(" in openpose_model:
+                clean_model_name = openpose_model.split("(")[0].strip()
+            
+            # 自动下载模型如果需要
+            if "下载" in openpose_model and clean_model_name in OPENPOSE_MODELS:
+                print(f"用户选择了下载 {clean_model_name} 模型")
+                download_model(clean_model_name)
+                # 创建下载提示图像
+                visualization = image_np.copy()
+                cv2.putText(
+                    visualization,
+                    f"正在下载OpenPose模型: {clean_model_name}",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2
+                )
+                cv2.putText(
+                    visualization,
+                    "请等待下载完成后重试",
+                    (20, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2
+                )
+                # 转换回tensor格式
+                vis_tensor = torch.from_numpy(visualization.astype(np.float32) / 255.0)
+                return (0.0, vis_tensor.unsqueeze(0))
+            
+            score, visualization = self._openpose_assessment(image_np, clean_model_name)
         
         # 将结果转换回tensor
         vis_tensor = torch.from_numpy(visualization.astype(np.float32) / 255.0)
@@ -141,10 +363,41 @@ class PoseAssessmentNode:
     def _openpose_assessment(self, image, model_name="body_25"):
         """使用OpenPose进行姿态评估"""
         try:
+            # 检查模型是否已准备就绪
+            if not is_model_ready(model_name):
+                # 如果模型不存在或不完整，开始下载
+                if model_name not in downloading_models or not downloading_models[model_name]:
+                    print(f"OpenPose模型 {model_name} 未找到或不完整，开始自动下载...")
+                    download_model(model_name)
+                
+                # 获取当前下载进度
+                progress = get_model_download_progress(model_name)
+                
+                # 创建带有下载进度的可视化图像
+                visualization = image.copy()
+                cv2.putText(
+                    visualization,
+                    f"正在下载OpenPose模型: {model_name} ({progress:.1f}%)",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2
+                )
+                cv2.putText(
+                    visualization,
+                    "请等待下载完成后重试",
+                    (20, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2
+                )
+                
+                return 0.0, visualization
+            
             # 获取模型路径
             model_dir = os.path.join(folder_paths.models_dir, "openpose", model_name)
-            if not os.path.exists(model_dir):
-                raise ValueError(f"OpenPose模型 {model_name} 未找到。请先下载模型。")
             
             # 查找模型文件
             prototxt_path = None
@@ -156,7 +409,23 @@ class PoseAssessmentNode:
                     model_path = os.path.join(model_dir, file)
             
             if not prototxt_path or not model_path:
-                raise ValueError(f"OpenPose模型文件不完整。请重新下载 {model_name} 模型。")
+                # 如果找不到文件但目录存在，可能文件损坏，尝试重新下载
+                print(f"OpenPose模型文件不完整，尝试重新下载 {model_name} 模型...")
+                download_model(model_name)
+                
+                # 创建错误信息图像
+                visualization = image.copy()
+                cv2.putText(
+                    visualization,
+                    f"OpenPose模型文件不完整，正在重新下载: {model_name}",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2
+                )
+                
+                return 0.0, visualization
             
             # 加载模型
             net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
@@ -318,6 +587,64 @@ class PoseAssessmentNode:
                             
                             return (leg_score + torso_score + arm_score) / 3
             
+            return 0.5  # 默认中等分数
+        except:
+            return 0.5  # 出错时返回中等分数
+    
+    def _check_openpose_proportions(self, points, model_name):
+        """检查OpenPose检测出的人体比例"""
+        try:
+            if model_name == "body_25":
+                # 检查关键点是否有效
+                valid_points = [p for p in points if p is not None]
+                if len(valid_points) < 10:  # 至少需要10个有效点
+                    return 0.5
+                
+                # 计算身高
+                neck = points[1]  # 脖子
+                mid_hip = points[8]  # 髋部中点
+                
+                if neck and mid_hip:
+                    # 身高
+                    body_height = ((neck[0] - mid_hip[0]) ** 2 + (neck[1] - mid_hip[1]) ** 2) ** 0.5
+                    
+                    scores = []
+                    
+                    # 检查腿长
+                    right_hip = points[9]
+                    right_knee = points[10]
+                    right_ankle = points[11]
+                    
+                    if right_hip and right_knee and right_ankle:
+                        upper_leg = ((right_hip[0] - right_knee[0]) ** 2 + (right_hip[1] - right_knee[1]) ** 2) ** 0.5
+                        lower_leg = ((right_knee[0] - right_ankle[0]) ** 2 + (right_knee[1] - right_ankle[1]) ** 2) ** 0.5
+                        
+                        leg_ratio = (upper_leg + lower_leg) / body_height
+                        leg_score = 1.0 - min(abs(leg_ratio - 0.5) * 4, 1.0)
+                        scores.append(leg_score)
+                    
+                    # 检查手臂长度
+                    right_shoulder = points[2]
+                    right_elbow = points[3]
+                    right_wrist = points[4]
+                    
+                    if right_shoulder and right_elbow and right_wrist:
+                        upper_arm = ((right_shoulder[0] - right_elbow[0]) ** 2 + (right_shoulder[1] - right_elbow[1]) ** 2) ** 0.5
+                        forearm = ((right_elbow[0] - right_wrist[0]) ** 2 + (right_elbow[1] - right_wrist[1]) ** 2) ** 0.5
+                        
+                        arm_ratio = (upper_arm + forearm) / body_height
+                        arm_score = 1.0 - min(abs(arm_ratio - 0.4) * 4, 1.0)
+                        scores.append(arm_score)
+                    
+                    # 计算最终分数
+                    if scores:
+                        return sum(scores) / len(scores)
+            
+            elif model_name == "coco":
+                # COCO模型的关键点定义不同
+                # 省略实现，可根据需要添加
+                pass
+                
             return 0.5  # 默认中等分数
         except:
             return 0.5  # 出错时返回中等分数
