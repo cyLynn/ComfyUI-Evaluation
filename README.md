@@ -47,7 +47,7 @@ Comfyui-Evaluation是一个专为ComfyUI设计的插件，提供多种评估节�
 git clone https://github.com/yourusername/Comfyui-Evaluation.git
 cd ComfyUI/custom_nodes/
 ln -s /path/to/Comfyui-Evaluation ./
-```
+```                     
 
 ## 使用方法
 
