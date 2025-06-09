@@ -39,7 +39,7 @@ NODE_CLASS_MAPPINGS = {
     "CLIPScoreNode": CLIPScoreNode,
     "PoseAssessmentNode": PoseAssessmentNode,
     "OpenPoseBody25ProportionNode": OpenPoseBody25ProportionNode,
-    "ImageQualityNode": ImageQualityNode, 
+    "ImageQualityNode": ImageQualityNode,
     "FashionAnalysisNode": FashionAnalysisNode,
     "HumanDetectionNode": HumanDetectionNode,
     "TextureStructureNode": TextureStructureNode,
