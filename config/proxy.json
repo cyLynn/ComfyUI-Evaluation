@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "http": "http://127.0.0.1:7890",
+  "https": "http://127.0.0.1:7890",
+  "socks": "socks5://127.0.0.1:7890",
+  "no_proxy": "localhost,127.0.0.1"
+}

@@ -9,22 +9,8 @@ import cv2
 import os
 import json
 import folder_paths
-import urllib.request
-import shutil
-import threading
-import time
-import socket
 from pathlib import Path
 from urllib.parse import urlparse
-
-# 代理设置
-PROXY_CONFIG = {
-    "enabled": False,
-    "http": "",
-    "https": "",
-    "socks": "",
-    "no_proxy": "localhost,127.0.0.1"
-}
 
 # 模型URLs和文件信息
 OPENPOSE_MODELS = {
@@ -51,405 +37,10 @@ OPENPOSE_MODELS = {
     }
 }
 
-# 全局变量，用于跟踪模型下载状态
-downloading_models = {}
-download_progress = {}
-
 def ensure_directory(dir_path):
     """确保目录存在，如果不存在则创建"""
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
-
-def download_file(url, destination, use_proxy=None, max_retries=3, timeout=30):
-    """从URL下载文件到指定目标
-    
-    Args:
-        url: 下载的URL
-        destination: 目标文件路径
-        use_proxy: 是否使用代理，None时使用全局配置，True/False强制开启/关闭
-        max_retries: 最大重试次数
-        timeout: 连接超时时间(秒)
-    """
-    retry_count = 0
-    temp_file = f"{destination}.download"
-    
-    # 确保目录存在
-    os.makedirs(os.path.dirname(destination), exist_ok=True)
-    
-    while retry_count < max_retries:
-        try:
-            if retry_count > 0:
-                print(f"第 {retry_count + 1} 次尝试下载: {url}")
-            else:
-                print(f"开始下载: {url}")
-                print(f"保存到: {destination}")
-            
-            # 处理代理设置
-            request = urllib.request.Request(url)
-            request.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3')
-            
-            # 确定是否使用代理
-            use_proxy_flag = PROXY_CONFIG["enabled"] if use_proxy is None else use_proxy
-            
-            if use_proxy_flag:
-                print(f"使用代理下载: {url}")
-                # 根据URL协议选择合适的代理
-                parsed_url = urlparse(url)
-                if parsed_url.scheme == 'https' and PROXY_CONFIG['https']:
-                    proxy = urllib.request.ProxyHandler({
-                        'https': PROXY_CONFIG['https']
-                    })
-                    print(f"使用HTTPS代理: {PROXY_CONFIG['https']}")
-                elif parsed_url.scheme == 'http' and PROXY_CONFIG['http']:
-                    proxy = urllib.request.ProxyHandler({
-                        'http': PROXY_CONFIG['http']
-                    })
-                    print(f"使用HTTP代理: {PROXY_CONFIG['http']}")
-                else:
-                    # 默认使用http代理
-                    proxy = urllib.request.ProxyHandler({
-                        'http': PROXY_CONFIG['http'],
-                        'https': PROXY_CONFIG['https']
-                    }) if PROXY_CONFIG['http'] or PROXY_CONFIG['https'] else None
-                    print(f"使用默认代理设置")
-                    
-                if proxy:
-                    opener = urllib.request.build_opener(proxy)
-                    urllib.request.install_opener(opener)
-            else:
-                print(f"不使用代理下载: {url}")
-            
-            # 开始下载
-            try:
-                # 设置超时时间
-                with urllib.request.urlopen(request, timeout=timeout) as response, open(temp_file, 'wb') as out_file:
-                    file_size = int(response.headers.get('Content-Length', 0))
-                    block_size = 8192
-                    downloaded = 0
-                    start_time = time.time()
-                    last_update_time = start_time
-                    
-                    while True:
-                        try:
-                            buffer = response.read(block_size)
-                            if not buffer:
-                                break
-                            
-                            downloaded += len(buffer)
-                            out_file.write(buffer)
-                            
-                            # 更新下载进度
-                            if file_size > 0:
-                                model_name = os.path.basename(os.path.dirname(destination))
-                                file_name = os.path.basename(destination)
-                                key = f"{model_name}/{file_name}"
-                                download_progress[key] = (downloaded / file_size) * 100
-                                
-                                # 显示下载速度和进度
-                                current_time = time.time()
-                                if current_time - last_update_time > 0.5:  # 每0.5秒更新一次
-                                    elapsed = current_time - start_time
-                                    speed = downloaded / elapsed if elapsed > 0 else 0
-                                    print(f"\r下载进度: {download_progress[key]:.1f}% - {downloaded/(1024*1024):.1f}/{file_size/(1024*1024):.1f}MB - {speed/(1024*1024):.2f}MB/s", end="")
-                                    last_update_time = current_time
-                        except socket.timeout:
-                            print("\n读取超时，重试...")
-                            continue
-                    
-                    print("\n下载完成!")
-            except urllib.error.URLError as e:
-                if isinstance(e.reason, socket.timeout):
-                    print(f"连接超时: {e}")
-                    retry_count += 1
-                    continue
-                raise
-            
-            # 验证下载完成后再重命名文件
-            if os.path.exists(temp_file):
-                if os.path.getsize(temp_file) > 0:
-                    # 如果文件大小已知，验证下载是否完整
-                    if file_size > 0 and os.path.getsize(temp_file) < file_size:
-                        print(f"警告: 下载不完整 ({os.path.getsize(temp_file)}/{file_size} 字节)")
-                        retry_count += 1
-                        continue
-                    
-                    # 如果目标文件已存在先删除它
-                    if os.path.exists(destination):
-                        os.remove(destination)
-                    os.rename(temp_file, destination)
-                    print(f"下载完成并保存到: {destination}")
-                    
-                    # 更新进度为100%
-                    model_name = os.path.basename(os.path.dirname(destination))
-                    file_name = os.path.basename(destination)
-                    key = f"{model_name}/{file_name}"
-                    download_progress[key] = 100
-                    
-                    return True
-                else:
-                    # 如果临时文件大小为0，说明下载失败
-                    os.remove(temp_file)
-                    print(f"下载失败: {destination} 文件大小为0")
-                    retry_count += 1
-                    continue
-            else:
-                print(f"下载失败: 临时文件不存在")
-                retry_count += 1
-                continue
-                
-        except Exception as e:
-            print(f"下载出错: {str(e)}")
-            # 清理临时文件
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-            retry_count += 1
-            
-            # 如果网络错误，可能需要切换代理
-            if "Connection" in str(e) or "Timeout" in str(e) or "timeout" in str(e).lower():
-                print("检测到网络连接问题，可能需要调整代理设置")
-    
-    # 更新下载进度为失败状态(-1)
-    model_name = os.path.basename(os.path.dirname(destination))
-    file_name = os.path.basename(destination)
-    key = f"{model_name}/{file_name}"
-    download_progress[key] = -1
-    
-    print(f"下载失败: 已达到最大重试次数 ({max_retries})")
-    return False
-
-def download_model_async(model_name, use_proxy=None):
-    """异步下载OpenPose模型
-    
-    Args:
-        model_name: 模型名称
-        use_proxy: 是否使用代理，None表示使用全局设置
-    """
-    if model_name not in OPENPOSE_MODELS:
-        print(f"错误: 未知的模型 '{model_name}'")
-        downloading_models[model_name] = False
-        return False
-    
-    # 设置下载状态
-    downloading_models[model_name] = True
-    print(f"开始下载OpenPose模型: {model_name}")
-    
-    # 确定模型目录
-    openpose_dir = os.path.join(folder_paths.models_dir, "openpose", model_name)
-    ensure_directory(openpose_dir)
-    
-    # 下载模型文件
-    model_info = OPENPOSE_MODELS[model_name]
-    success = True
-    all_files_exist = True
-    
-    # 下载每个模型文件
-    for file_name, url in model_info["files"].items():
-        file_path = os.path.join(openpose_dir, file_name)
-        key = f"{model_name}/{file_name}"
-        download_progress[key] = 0
-        
-        if not os.path.exists(file_path):
-            all_files_exist = False
-            file_success = download_file(url, file_path, use_proxy=use_proxy)
-            success = success and file_success
-            
-            # 如果下载失败，更新进度为-1表示错误
-            if not file_success:
-                download_progress[key] = -1
-        else:
-            # 检查文件大小是否正常
-            if os.path.getsize(file_path) > 0:
-                download_progress[key] = 100
-                print(f"文件已存在: {file_path}")
-            else:
-                # 如果文件存在但大小为0，尝试重新下载
-                print(f"文件大小为0，重新下载: {file_path}")
-                all_files_exist = False
-                os.remove(file_path)
-                file_success = download_file(url, file_path, use_proxy=use_proxy)
-                success = success and file_success
-                if not file_success:
-                    download_progress[key] = -1
-    
-    # 只有在所有文件下载成功时才创建模型信息文件
-    if success:
-        # 创建模型信息文件
-        info_path = os.path.join(openpose_dir, "model_info.json")
-        with open(info_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                "name": model_name,
-                "description": model_info["description"],
-                "files": list(model_info["files"].keys()),
-                "status": "complete"
-            }, f, ensure_ascii=False, indent=2)
-        print(f"OpenPose模型下载完成: {model_name}")
-    else:
-        # 创建失败状态的信息文件
-        info_path = os.path.join(openpose_dir, "model_info.json")
-        with open(info_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                "name": model_name,
-                "description": model_info["description"],
-                "files": list(model_info["files"].keys()),
-                "status": "incomplete",
-                "error": "下载失败，请尝试重新下载"
-            }, f, ensure_ascii=False, indent=2)
-        print(f"OpenPose模型 {model_name} 下载失败，部分文件可能不完整")
-    
-    # 更新下载状态
-    downloading_models[model_name] = False
-    
-    return success
-
-def download_model(model_name, use_proxy=None):
-    """启动异步下载线程
-    
-    Args:
-        model_name: 要下载的模型名称
-        use_proxy: 是否使用代理，None表示使用全局配置
-    """
-    if model_name in downloading_models and downloading_models[model_name]:
-        print(f"模型 {model_name} 已经在下载中...")
-        return
-    
-    # 创建新线程进行下载
-    thread = threading.Thread(target=download_model_async, args=(model_name, use_proxy))
-    thread.daemon = True
-    thread.start()
-
-def is_model_ready(model_name):
-    """检查模型是否已准备就绪"""
-    # 检查是否在下载中
-    if model_name in downloading_models and downloading_models[model_name]:
-        return False
-    
-    # 检查模型文件是否存在
-    model_dir = os.path.join(folder_paths.models_dir, "openpose", model_name)
-    if not os.path.exists(model_dir):
-        return False
-    
-    # 检查模型信息文件
-    info_path = os.path.join(model_dir, "model_info.json")
-    if os.path.exists(info_path):
-        try:
-            with open(info_path, 'r', encoding='utf-8') as f:
-                info = json.load(f)
-                # 检查模型状态
-                if info.get("status") == "incomplete":
-                    return False
-        except:
-            # 如果无法读取信息文件，则进行常规检查
-            pass
-    
-    # 若模型不在OPENPOSE_MODELS中，无法验证文件
-    if model_name not in OPENPOSE_MODELS:
-        # 简单检查是否有.caffemodel和.prototxt文件
-        has_caffemodel = False
-        has_prototxt = False
-        for file in os.listdir(model_dir):
-            if file.endswith('.caffemodel'):
-                has_caffemodel = True
-                # 检查文件大小
-                if os.path.getsize(os.path.join(model_dir, file)) == 0:
-                    return False
-            elif file.endswith('.prototxt'):
-                has_prototxt = True
-                # 检查文件大小
-                if os.path.getsize(os.path.join(model_dir, file)) == 0:
-                    return False
-        
-        return has_caffemodel and has_prototxt
-    
-    # 检查所有必要文件
-    for file_name in OPENPOSE_MODELS[model_name]["files"]:
-        file_path = os.path.join(model_dir, file_name)
-        if not os.path.exists(file_path):
-            return False
-        # 检查文件大小
-        if os.path.getsize(file_path) == 0:
-            return False
-        
-        # 对于caffemodel文件，检查文件大小是否合理
-        if file_name.endswith('.caffemodel'):
-            # caffemodel文件通常较大，至少应该有几MB
-            min_size = 5 * 1024 * 1024  # 5MB
-            if os.path.getsize(file_path) < min_size:
-                print(f"警告: {file_path} 文件大小异常 ({os.path.getsize(file_path) / 1024 / 1024:.2f}MB < 5MB)")
-                return False
-    
-    return True
-
-def get_model_download_progress(model_name):
-    """获取模型下载进度，如果有错误返回负值"""
-    if model_name not in OPENPOSE_MODELS:
-        return 0
-    
-    # 计算总进度
-    total_progress = 0
-    file_count = 0
-    has_error = False
-    
-    for file_name in OPENPOSE_MODELS[model_name]["files"]:
-        key = f"{model_name}/{file_name}"
-        if key in download_progress:
-            # 检查是否有错误（值为-1）
-            if download_progress[key] == -1:
-                has_error = True
-            else:
-                total_progress += download_progress[key]
-                file_count += 1
-    
-    # 如果有任何文件下载失败，返回-1表示错误
-    if has_error:
-        return -1
-    
-    if file_count == 0:
-        return 0
-    
-    return total_progress / file_count
-
-# 加载代理设置
-def load_proxy_config():
-    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "proxy.json")
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                for key, value in config.items():
-                    if key in PROXY_CONFIG:
-                        PROXY_CONFIG[key] = value
-            print(f"已加载代理配置: {'启用' if PROXY_CONFIG['enabled'] else '禁用'}")
-            if PROXY_CONFIG['enabled']:
-                if PROXY_CONFIG['http']:
-                    print(f"HTTP代理: {PROXY_CONFIG['http']}")
-                if PROXY_CONFIG['https']:
-                    print(f"HTTPS代理: {PROXY_CONFIG['https']}")
-                if PROXY_CONFIG['socks']:
-                    print(f"SOCKS代理: {PROXY_CONFIG['socks']}")
-        except Exception as e:
-            print(f"加载代理配置失败: {str(e)}")
-
-# 创建默认代理配置（如果不存在）
-def create_default_proxy_config():
-    config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
-    if not os.path.exists(config_dir):
-        os.makedirs(config_dir)
-    
-    config_path = os.path.join(config_dir, "proxy.json")
-    if not os.path.exists(config_path):
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                "enabled": False,
-                "http": "http://127.0.0.1:7890",
-                "https": "http://127.0.0.1:7890",
-                "socks": "socks5://127.0.0.1:7890",
-                "no_proxy": "localhost,127.0.0.1"
-            }, f, ensure_ascii=False, indent=2)
-        print(f"已创建默认代理配置: {config_path}")
-
-# 初始化代理设置
-create_default_proxy_config()
-load_proxy_config()
 
 class PoseAssessmentNode:
     """评估人体姿态的自然度和肢体比例合理性"""
@@ -813,59 +404,168 @@ class PoseAssessmentNode:
             return 0.5  # 出错时返回中等分数
     
     def _check_openpose_proportions(self, points, model_name):
-        """检查OpenPose检测出的人体比例"""
+        """检查OpenPose检测出的人体比例，body_25下：全身有下肢就全身评分，否则只算半身"""
         try:
             if model_name == "body_25":
-                # 检查关键点是否有效
                 valid_points = [p for p in points if p is not None]
-                if len(valid_points) < 10:  # 至少需要10个有效点
+                if len(valid_points) < 7:  # 至少需要7个有效点
                     return 0.5
-                
-                # 计算身高
-                neck = points[1]  # 脖子
-                mid_hip = points[8]  # 髋部中点
-                
-                if neck and mid_hip:
-                    # 身高
+                # 判断下肢点
+                lower_body_ids = [8,9,10,11,12,13,14]  # 髋、膝、踝
+                upper_body_ids = [1,2,3,4,5,6,7]      # 脖、肩、肘、腕
+                lower_valid = all(points[i] is not None for i in lower_body_ids)
+                upper_valid = all(points[i] is not None for i in upper_body_ids)
+                if lower_valid and upper_valid:
+                    # 全身评分
+                    neck = points[1]
+                    mid_hip = points[8]
                     body_height = ((neck[0] - mid_hip[0]) ** 2 + (neck[1] - mid_hip[1]) ** 2) ** 0.5
-                    
-                    scores = []
-                    
-                    # 检查腿长
+                    # 腿长
                     right_hip = points[9]
                     right_knee = points[10]
                     right_ankle = points[11]
-                    
-                    if right_hip and right_knee and right_ankle:
-                        upper_leg = ((right_hip[0] - right_knee[0]) ** 2 + (right_hip[1] - right_knee[1]) ** 2) ** 0.5
-                        lower_leg = ((right_knee[0] - right_ankle[0]) ** 2 + (right_knee[1] - right_ankle[1]) ** 2) ** 0.5
-                        
-                        leg_ratio = (upper_leg + lower_leg) / body_height
-                        leg_score = 1.0 - min(abs(leg_ratio - 0.5) * 4, 1.0)
-                        scores.append(leg_score)
-                    
-                    # 检查手臂长度
+                    left_hip = points[12]
+                    left_knee = points[13]
+                    left_ankle = points[14]
+                    right_leg = (((right_hip[0] - right_knee[0]) ** 2 + (right_hip[1] - right_knee[1]) ** 2) ** 0.5 +
+                                 ((right_knee[0] - right_ankle[0]) ** 2 + (right_knee[1] - right_ankle[1]) ** 2) ** 0.5)
+                    left_leg = (((left_hip[0] - left_knee[0]) ** 2 + (left_hip[1] - left_knee[1]) ** 2) ** 0.5 +
+                                ((left_knee[0] - left_ankle[0]) ** 2 + (left_knee[1] - left_ankle[1]) ** 2) ** 0.5)
+                    leg_ratio = (right_leg + left_leg) / (2 * body_height) if body_height > 0 else 0
+                    # 手臂
                     right_shoulder = points[2]
                     right_elbow = points[3]
                     right_wrist = points[4]
-                    
-                    if right_shoulder and right_elbow and right_wrist:
-                        upper_arm = ((right_shoulder[0] - right_elbow[0]) ** 2 + (right_shoulder[1] - right_elbow[1]) ** 2) ** 0.5
-                        forearm = ((right_elbow[0] - right_wrist[0]) ** 2 + (right_elbow[1] - right_wrist[1]) ** 2) ** 0.5
-                        
-                        arm_ratio = (upper_arm + forearm) / body_height
-                        arm_score = 1.0 - min(abs(arm_ratio - 0.4) * 4, 1.0)
-                        scores.append(arm_score)
-                    
-                    # 计算最终分数
-                    if scores:
-                        return sum(scores) / len(scores)
-            
-            elif model_name == "coco":
-                # COCO模型的关键点定义不同
-                # 省略实现，可根据需要添加
-                pass
-                
-            return 0.5  # 默认中等分数
+                    left_shoulder = points[5]
+                    left_elbow = points[6]
+                    left_wrist = points[7]
+                    right_arm = (((right_shoulder[0] - right_elbow[0]) ** 2 + (right_shoulder[1] - right_elbow[1]) ** 2) ** 0.5 +
+                                 ((right_elbow[0] - right_wrist[0]) ** 2 + (right_elbow[1] - right_wrist[1]) ** 2) ** 0.5)
+                    left_arm = (((left_shoulder[0] - left_elbow[0]) ** 2 + (left_shoulder[1] - left_elbow[1]) ** 2) ** 0.5 +
+                                ((left_elbow[0] - left_wrist[0]) ** 2 + (left_elbow[1] - left_wrist[1]) ** 2) ** 0.5)
+                    arm_ratio = (right_arm + left_arm) / (2 * body_height) if body_height > 0 else 0
+                    # 躯干
+                    torso = ((neck[0] - mid_hip[0]) ** 2 + (neck[1] - mid_hip[1]) ** 2) ** 0.5
+                    torso_ratio = torso / body_height if body_height > 0 else 0
+                    leg_score = 1.0 - min(abs(leg_ratio - 0.9) * 2, 1.0)
+                    arm_score = 1.0 - min(abs(arm_ratio - 0.7) * 2, 1.0)
+                    torso_score = 1.0 - min(abs(torso_ratio - 0.35) * 4, 1.0)
+                    return (leg_score + arm_score + torso_score) / 3
+                elif upper_valid:
+                    # 只评价上半身
+                    neck = points[1]
+                    right_shoulder = points[2]
+                    right_elbow = points[3]
+                    right_wrist = points[4]
+                    left_shoulder = points[5]
+                    left_elbow = points[6]
+                    left_wrist = points[7]
+                    right_arm = ((right_shoulder[0] - right_elbow[0]) ** 2 + (right_shoulder[1] - right_elbow[1]) ** 2) ** 0.5 + \
+                                ((right_elbow[0] - right_wrist[0]) ** 2 + (right_elbow[1] - right_wrist[1]) ** 2) ** 0.5
+                    left_arm = ((left_shoulder[0] - left_elbow[0]) ** 2 + (left_shoulder[1] - left_elbow[1]) ** 2) ** 0.5 + \
+                               ((left_elbow[0] - left_wrist[0]) ** 2 + (left_elbow[1] - left_wrist[1]) ** 2) ** 0.5
+                    torso = ((neck[0] - ((right_shoulder[0] + left_shoulder[0]) / 2)) ** 2 + (neck[1] - ((right_shoulder[1] + left_shoulder[1]) / 2)) ** 2) ** 0.5
+                    arm_ratio = (right_arm + left_arm) / (2 * torso) if torso > 0 else 0
+                    arm_score = 1.0 - min(abs(arm_ratio - 1.8) * 2, 1.0)
+                    return arm_score
+                else:
+                    return 0.5
+            return 0.5
         except:
-            return 0.5  # 出错时返回中等分数
+            return 0.5
+
+class OpenPoseBody25ProportionNode:
+    """
+    ComfyUI节点：输入OpenPose body_25格式关键点JSON，输出人体比例合理性分数。
+    - 输入：body_25格式的JSON（dict或str），可只含上半身关键点
+    - 输出：分数（float），0~100，越高表示比例越合理
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "body25_json": ("STRING", {"multiline": True, "default": ""}),
+            }
+        }
+
+    RETURN_TYPES = ("FLOAT",)
+    RETURN_NAMES = ("proportion_score",)
+    FUNCTION = "evaluate_body25_proportion"
+    CATEGORY = "Comfyui-Evaluation/Pose"
+
+    def evaluate_body25_proportion(self, body25_json):
+        import json
+        # 解析输入
+        if isinstance(body25_json, str):
+            try:
+                data = json.loads(body25_json)
+            except Exception as e:
+                print(f"JSON解析失败: {e}")
+                return (0.0,)
+        else:
+            data = body25_json
+        # 取关键点
+        try:
+            people = data["people"]
+            if not people or "pose_keypoints_2d" not in people[0]:
+                return (0.0,)
+            keypoints = people[0]["pose_keypoints_2d"]
+            # body_25: 25个点
+            if len(keypoints) < 25:
+                return (0.0,)
+            # 只取前25个点
+            keypoints = keypoints[:25]
+            # 转为(x, y, conf)列表
+            pts = [(float(x), float(y), float(c)) for x, y, c in keypoints]
+            # 判断上半身/全身
+            lower_body_ids = [8,9,10,11,12,13,14]  # 髋、膝、踝
+            upper_body_ids = [1,2,3,4,5,6,7]      # 脖、肩、肘、腕
+            lower_valid = all(pts[i][2] > 0.1 for i in lower_body_ids)
+            upper_valid = all(pts[i][2] > 0.1 for i in upper_body_ids)
+            # 评分
+            if lower_valid and upper_valid:
+                # 全身比例
+                neck = pts[1]
+                mid_hip = pts[8]
+                body_height = abs(neck[1] - mid_hip[1])
+                # 腿长
+                right_leg = abs(pts[9][1] - pts[10][1]) + abs(pts[10][1] - pts[11][1])
+                left_leg = abs(pts[12][1] - pts[13][1]) + abs(pts[13][1] - pts[14][1])
+                leg_ratio = (right_leg + left_leg) / (2 * body_height) if body_height > 0 else 0
+                # 手臂
+                right_arm = abs(pts[2][1] - pts[3][1]) + abs(pts[3][1] - pts[4][1])
+                left_arm = abs(pts[5][1] - pts[6][1]) + abs(pts[6][1] - pts[7][1])
+                arm_ratio = (right_arm + left_arm) / (2 * body_height) if body_height > 0 else 0
+                # 躯干
+                torso = abs(neck[1] - mid_hip[1])
+                torso_ratio = torso / body_height if body_height > 0 else 0
+                # 理想比例
+                leg_score = 1.0 - min(abs(leg_ratio - 0.9) * 2, 1.0)
+                arm_score = 1.0 - min(abs(arm_ratio - 0.7) * 2, 1.0)
+                torso_score = 1.0 - min(abs(torso_ratio - 0.35) * 4, 1.0)
+                score = (leg_score + arm_score + torso_score) / 3 * 100
+                return (float(score),)
+            elif upper_valid:
+                # 只评价上半身
+                neck = pts[1]
+                right_shoulder = pts[2]
+                right_elbow = pts[3]
+                right_wrist = pts[4]
+                left_shoulder = pts[5]
+                left_elbow = pts[6]
+                left_wrist = pts[7]
+                # 右臂
+                right_arm = abs(right_shoulder[1] - right_elbow[1]) + abs(right_elbow[1] - right_wrist[1])
+                # 左臂
+                left_arm = abs(left_shoulder[1] - left_elbow[1]) + abs(left_elbow[1] - left_wrist[1])
+                # 躯干
+                torso = abs(neck[1] - (right_shoulder[1] + left_shoulder[1]) / 2)
+                arm_ratio = (right_arm + left_arm) / (2 * torso) if torso > 0 else 0
+                arm_score = 1.0 - min(abs(arm_ratio - 1.8) * 2, 1.0)
+                score = arm_score * 100
+                return (float(score),)
+            else:
+                return (0.0,)
+        except Exception as e:
+            print(f"body25比例评分异常: {e}")
+            return (0.0,)

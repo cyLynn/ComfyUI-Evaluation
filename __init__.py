@@ -26,7 +26,7 @@ sys.path.append(module_path)
 
 # 导入各个模块
 from .nodes.clip_score import CLIPScoreNode
-from .nodes.pose_assessment import PoseAssessmentNode
+from .nodes.pose_assessment import PoseAssessmentNode, OpenPoseBody25ProportionNode
 from .nodes.image_quality import ImageQualityNode
 from .nodes.fashion_analysis import FashionAnalysisNode
 from .nodes.human_detection import HumanDetectionNode
@@ -38,6 +38,7 @@ from .nodes.hps_evaluation import HPSEvaluationNode
 NODE_CLASS_MAPPINGS = {
     "CLIPScoreNode": CLIPScoreNode,
     "PoseAssessmentNode": PoseAssessmentNode,
+    "OpenPoseBody25ProportionNode": OpenPoseBody25ProportionNode,
     "ImageQualityNode": ImageQualityNode, 
     "FashionAnalysisNode": FashionAnalysisNode,
     "HumanDetectionNode": HumanDetectionNode,
@@ -50,6 +51,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "CLIPScoreNode": "图文一致性评分",
     "PoseAssessmentNode": "姿态准确性评估",
+    "OpenPoseBody25ProportionNode": "OpenPose人体比例评分",
     "ImageQualityNode": "图像质量评估",
     "FashionAnalysisNode": "服装结构分析",
     "HumanDetectionNode": "人体检测评估",
